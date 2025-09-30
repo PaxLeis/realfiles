@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Advanced Multi-Folder Code Editor</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  overflow: hidden;
+  background:#222;
+  color:#eee;
+}
+#toolbar {
+  background:#333; padding:10px; display:flex; gap:10px;
+}
+button {
+  background:#555; color:#fff; border:none; padding:8px 12px; cursor:pointer; border-radius:4px;
+}
+button:hover {
+  background:#777;
+}
+#container {
+  position: relative; width:100%; height: calc(100vh - 50px);
+  display:flex; overflow:hidden;
+}
+#filetree {
+  width:250px; background:#111; overflow:auto; padding:10px;
+}
+#filetree .folder, #filetree .file {
+  padding:4px 8px; margin:2px 0; background:#222; border-radius:4px; cursor:pointer;
+}
+#filetree .folder:hover, #filetree .file:hover {
+  background:#444;
+}
+#editorContainer {
+  flex:1; display:flex; flex-direction:column; height:100%;
+  display: none; /* hide initially */
+}
+#editorContainer.show {
+  display: flex; /* show when a file is selected */
+}
+#tabBar {
+  display:flex; background:#333; padding:5px;
+}
+#tabBar div {
+  padding:5px 10px; margin-right:5px; background:#555; border-radius:3px; cursor:pointer;
+}
+#tabBar .active {
+  background:#888;
+}
+#editorArea {
+  flex:1; display:flex; flex-direction:column;
+}
+#code {
+  flex:1; width:100%; resize:none; padding:10px; font-family: monospace; font-size:14px; background:#222; color:#eee; border:none; outline:none;
+}
+#saveBtn {
+  padding:8px 12px; margin:10px; background:#555; border:none; border-radius:4px; cursor:pointer; align-self:flex-start;
+}
+#saveBtn:hover {
+  background:#777;
+}
+/* Modal styles omitted for brevity, same as before */
+#modalOverlay {
+  position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6);
+  display:flex; justify-content:center; align-items:center; z-index:9999; display:none;
+}
+#modal {
+  background:#222; padding:20px; border-radius:8px; width:80%; max-width:400px; box-shadow:0 0 10px #000; color:#eee;
+}
+#modal h3 {
+  margin-top:0;
+}
+#modal input, #modal textarea {
+  width:100%; padding:8px; margin-top:10px; border:none; border-radius:4px; background:#444; color:#eee; font-family: monospace; font-size:14px;
+}
+#modal button {
+  margin-top:15px; padding:8px 12px; border:none; border-radius:4px; cursor:pointer;
+}
+#modal .btn-primary {
+  background:#555; color:#fff; margin-right:10px;
+}
+#modal .btn-primary:hover {
+  background:#777;
+}
+#modal .btn-cancel {
+  background:#333; color:#eee;
+}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button onclick="showInputDialog('folder')">Add Folder</button>
+  <button onclick="showInputDialog('file')">Add File</button>
+  <button onclick="saveFiles()">Save</button>
+  <button onclick="loadFiles()">Load</button>
+  <button onclick="deselectFile()">Deselect</button>
+</div>
+
+<div id="container">
+  <div id="filetree"></div>
+  <div id="editorContainer">
+    <div id="tabBar">
+      <div id="htmlTab" class="active" onclick="switchTab('html')">HTML</div>
+      <div id="cssTab" onclick="switchTab('css')">CSS</div>
+      <div id="jsTab" onclick="switchTab('js')">JS</div>
+    </div>
+    <div id="editorArea">
+      <textarea id="code"></textarea>
+      <button id="saveCodeBtn" onclick="saveCode()">Save Code</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal overlay omitted for brevity, same as previous code -->
+<div id="modalOverlay">
+  <div id="modal">
+    <h3 id="modalTitle">Title</h3>
+    <div id="modalContent"></div>
+    <div style="margin-top:15px; text-align:right;">
+      <button class="btn-primary" id="modalOkBtn">OK</button>
+      <button class="btn-cancel" id="modalCancelBtn" style="display:none;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Data structure for folders/files with code */
+let root = {
+  name: 'root',
+  type: 'folder',
+  children: []
+};
+let currentFile = null; 
+let currentTab='html';
+
+// Helper functions
+function createFolder(name) {
+  return { name, type:'folder', children:[] };
+}
+function createFile(name) {
+  return {
+    name,
+    type:'file',
+    code: { html:'', css:'', js:'' }
+  };
+}
+
+const filetreeDiv = document.getElementById('filetree');
+const modalOverlay = document.getElementById('modalOverlay');
+const modalTitle = document.getElementById('modalTitle');
+const modalContent = document.getElementById('modalContent');
+const modalOkBtn = document.getElementById('modalOkBtn');
+const modalCancelBtn = document.getElementById('modalCancelBtn');
+
+let pendingAction = null;
+let modalInputCallback = null;
+
+// Show input dialog for adding/renaming
+function showInputDialog(type, existingNode=null) {
+  modalTitle.textContent = (type==='folder')?'New Folder':'New File';
+  modalContent.innerHTML = `<input type="text" id="modalInput" placeholder="${(type==='folder')?'Folder Name':'File Name'}" />`;
+  modalOkBtn.style.display='inline-block';
+  modalCancelBtn.style.display='inline-block';
+  document.getElementById('modalInput').value=existingNode? existingNode.name:'';
+
+  modalInputCallback=()=> {
+    const name = document.getElementById('modalInput').value.trim();
+    if (name) {
+      if (type==='folder') {
+        root.children.push(createFolder(name));
+      } else {
+        root.children.push(createFile(name));
+      }
+      renderTree(root, filetreeDiv);
+    }
+  };
+  showModal();
+}
+
+// Rename node
+function showRenameDialog(node) {
+  modalTitle.textContent='Rename';
+  modalContent.innerHTML=`<input type="text" id="modalInput" value="${node.name}" />`;
+  modalOkBtn.style.display='inline-block';
+  modalCancelBtn.style.display='inline-block';
+
+  modalInputCallback=()=> {
+    const name=document.getElementById('modalInput').value.trim();
+    if (name) {
+      node.name=name;
+      renderTree(root, filetreeDiv);
+    }
+  };
+  showModal();
+}
+
+function showConfirmDialog(message, callback) {
+  modalTitle.textContent='Confirm';
+  modalContent.innerHTML=`<p>${message}</p>`;
+  modalOkBtn.style.display='inline-block';
+  modalCancelBtn.style.display='inline-block';
+  pendingAction=callback;
+  showModal();
+}
+
+// Notification message
+function showMessage(msg) {
+  modalTitle.textContent='Message';
+  modalContent.innerHTML=`<p>${msg}</p>`;
+  modalOkBtn.style.display='inline-block';
+  modalCancelBtn.style.display='none';
+  pendingAction=null;
+  showModal();
+}
+
+function showModal() {
+  document.getElementById('modal').style.borderColor='orange'; // optional styling
+  modalOverlay.style.display='flex';
+}
+
+document.getElementById('modalOkBtn').onclick=()=> {
+  if (modalInputCallback) modalInputCallback();
+  if (pendingAction) pendingAction();
+  closeModal();
+};
+document.getElementById('modalCancelBtn').onclick=()=> {
+  closeModal();
+};
+function closeModal() {
+  modalOverlay.style.display='none';
+}
+
+// Render tree
+function renderTree(node, parentEl) {
+  parentEl.innerHTML='';
+  function recurse(node, el) {
+    node.children.forEach(child => {
+      const div = document.createElement('div');
+      div.textContent = child.name + (child.type==='folder'?' [Folder]':' [File]');
+      div.className=child.type;
+      div.onclick=()=> {
+        if (child.type==='folder') {
+          if (div.nextSibling && div.nextSibling.style.display==='none') {
+            div.nextSibling.style.display='block';
+          } else if (div.nextSibling) {
+            div.nextSibling.style.display='none';
+          } else {
+            const sublist = document.createElement('div');
+            sublist.style.paddingLeft='15px';
+            recurse(child, sublist);
+            parentEl.insertBefore(sublist, div.nextSibling);
+          }
+        } else {
+          openFile(child);
+        }
+      };
+      // right-click menu for rename/delete if needed
+      parentEl.appendChild(div);
+    });
+  }
+  recurse(node, parentEl);
+}
+
+// Open file for editing
+function openFile(file) {
+  currentFile = file;
+  document.getElementById('code').value = file.code[currentTab] || '';
+  document.getElementById('editorContainer').classList.add('show');
+}
+
+// Deselect file and hide editor
+function deselectFile() {
+  currentFile = null;
+  document.getElementById('editorContainer').classList.remove('show');
+  document.getElementById('code').value = '';
+}
+
+// Save code
+function saveCode() {
+  if (currentFile) {
+    currentFile.code[currentTab]=document.getElementById('code').value;
+  }
+}
+
+// Switch tabs
+function switchTab(tab) {
+  currentTab=tab;
+  document.querySelectorAll('#tabBar div').forEach(div=>{
+    div.className=div.id===tab+'Tab'?'active':'';
+  });
+  if (currentFile) {
+    document.getElementById('code').value = currentFile.code[currentTab] || '';
+  }
+}
+
+// Save & load
+function saveFiles() {
+  localStorage.setItem('fileStructure', JSON.stringify(root));
+  showMessage('Structure saved!');
+}
+function loadFiles() {
+  const data=localStorage.getItem('fileStructure');
+  if (data) {
+    root=JSON.parse(data);
+    renderTree(root, filetreeDiv);
+    currentFile=null;
+    document.getElementById('code').value='';
+    deselectFile(); // ensure editor is hidden
+  } else {
+    showMessage('No saved data');
+  }
+}
+
+// Initial render
+renderTree(root, filetreeDiv);
+switchTab('html');
+</script>
+</body>
+</html>
