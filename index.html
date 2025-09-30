@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Advanced Multi-Folder Code Editor</title>
+<title>realfiles</title>
 <style>
 body {
   font-family: Arial, sans-serif;
@@ -249,6 +249,22 @@ function loadFiles() {
 // Initial render
 renderTree(root, filetreeDiv);
 switchTab('html');
+
+// Load saved data on page load
+window.onload = function() {
+  loadFiles();
+};
+
+// Auto-save every 5 seconds
+setInterval(() => {
+  localStorage.setItem('fileStructure', JSON.stringify(root));
+  console.log('Auto-saved at', new Date().toLocaleTimeString());
+}, 5000);
+
+// Save before reload or close
+window.addEventListener('beforeunload', () => {
+  saveFiles();
+});
 </script>
 </body>
 </html>
