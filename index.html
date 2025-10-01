@@ -74,8 +74,6 @@ button:hover {
   <button onclick="deselectFile()">Deselect</button>
   <button onclick="triggerFileUpload()">Upload File</button>
   <button id="deleteBtn" onclick="deleteSelected()" disabled>Delete</button>
-  <!-- Hidden file input -->
-  <input type="file" id="fileUploader" style="display:none" onchange="handleFileUpload(event)" />
 </div>
 
 <div id="container">
@@ -120,6 +118,8 @@ const filetreeDiv = document.getElementById('filetree');
 const openButton = document.getElementById('openBtn');
 const deleteButton = document.getElementById('deleteBtn');
 
+let dragSrcEl = null; // For tracking the source element during drag
+
 // Rendering file tree
 function renderTree(node, parentEl) {
   parentEl.innerHTML='';
@@ -127,10 +127,53 @@ function renderTree(node, parentEl) {
     node.children.forEach(child => {
       const div = document.createElement('div');
       div.textContent = child.name + (child.type==='folder'?' [Folder]':' [File]');
+      // Add draggable attribute
+      div.setAttribute('draggable', 'true');
+
+      // Drag events
+      div.addEventListener('dragstart', (e) => {
+        dragSrcEl = { item: child, element: div };
+        e.dataTransfer.setData('text/plain', ''); // for Firefox compatibility
+      });
+
+      // Drag over event to allow drop
+      div.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        // Highlight potential drop target
+        if (child.type==='folder') {
+          div.style.background='#666';
+        }
+      });
+      div.addEventListener('dragleave', (e) => {
+        // Remove highlight
+        div.style.background='#222';
+      });
+
+      // Drop event
+      div.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (child.type==='folder') {
+          // Move the dragged item into this folder
+          if (dragSrcEl && dragSrcEl.item !== child && !isDescendant(dragSrcEl.item, child)) {
+            // Remove from old parent
+            const oldParent = findParent(root, dragSrcEl.item);
+            if (oldParent) {
+              oldParent.children = oldParent.children.filter(c => c !== dragSrcEl.item);
+            }
+            // Add into new folder
+            child.children.push(dragSrcEl.item);
+            renderTree(root, parentEl);
+          }
+        }
+        // Remove highlight after drop
+        div.style.background='#222';
+      });
+
+      // Context menu or double click for delete could be added here if needed
+
       if (child.type==='folder') {
         div.className='folder';
         div.onclick=()=> {
-          // Select folder
           selectItem(child, div);
           // Toggle display of sublist
           if (div.nextSibling && div.nextSibling.style.display==='none') {
@@ -148,7 +191,6 @@ function renderTree(node, parentEl) {
       } else {
         div.className='file';
         div.onclick=()=> {
-          // Select file
           selectItem(child, div);
           openFile(child);
         };
@@ -159,16 +201,35 @@ function renderTree(node, parentEl) {
   recurse(node, parentEl);
 }
 
-// Function to handle selection
+// Helper to find parent node
+function findParent(node, target) {
+  if (!node.children) return null;
+  for (let c of node.children) {
+    if (c === target) return node;
+    if (c.type==='folder') {
+      const res = findParent(c, target);
+      if (res) return res;
+    }
+  }
+  return null;
+}
+
+// Helper to check if a node is a descendant of another (to prevent moving into own subtree)
+function isDescendant(child, parent) {
+  if (child === parent) return true;
+  if (parent.type==='folder') {
+    return parent.children.some(c => isDescendant(child, c));
+  }
+  return false;
+}
+
+// Selection handling
 function selectItem(item, elementDiv) {
-  // Deselect previous
   if (currentFolderOrFile && currentFolderOrFile.element) {
     currentFolderOrFile.element.style.background='#222';
   }
-  // Set new
   currentFolderOrFile = { item: item, element: elementDiv };
-  elementDiv.style.background='#666'; // highlight
-  // Enable delete button
+  elementDiv.style.background='#666';
   document.getElementById('deleteBtn').disabled=false;
 }
 
@@ -199,11 +260,10 @@ function findNodeByPath(pathArray) {
   return node;
 }
 
-// When a file is selected
+// Open file
 function openFile(file) {
   currentFile = file;
   document.getElementById('code').value = file.code[currentTab] || '';
-  // Show the "Open" button
   document.getElementById('openBtn').style.display='inline-block';
 }
 
@@ -213,15 +273,13 @@ function deselectFile() {
   currentFolderOrFile = null;
   document.getElementById('code').value='';
   document.getElementById('openBtn').style.display='none';
-  // Deselect highlight
   if (currentFolderOrFile && currentFolderOrFile.element) {
     currentFolderOrFile.element.style.background='#222';
   }
-  // Disable delete button
   document.getElementById('deleteBtn').disabled=true;
 }
 
-// Open in Blob
+// Open in blob
 function openFileInBlob() {
   if (!currentFile) return;
   const htmlContent = `
@@ -258,7 +316,7 @@ function switchTab(tab) {
   }
 }
 
-// Save & Load
+// Save & load
 function saveFiles() {
   localStorage.setItem('fileStructure', JSON.stringify(root));
   alert('Saved!');
@@ -271,23 +329,19 @@ function loadFiles() {
     currentFile=null;
     document.getElementById('code').value='';
     document.getElementById('openBtn').style.display='none';
-    // Deselect highlight
     if (currentFolderOrFile && currentFolderOrFile.element) {
       currentFolderOrFile.element.style.background='#222';
     }
-    // Disable delete button
     document.getElementById('deleteBtn').disabled=true;
   } else {
     alert('No saved data');
   }
 }
 
-// Trigger file upload dialog
+// File upload
 function triggerFileUpload() {
   document.getElementById('fileUploader').click();
 }
-
-// Handle uploaded file
 function handleFileUpload(event) {
   const file = event.target.files[0];
   if (file) {
@@ -316,16 +370,14 @@ function handleFileUpload(event) {
 function deleteSelected() {
   if (!currentFolderOrFile || !currentFolderOrFile.item) return;
   if (confirm('Are you sure you want to delete this?')) {
-    // Remove from parent's children
     function removeNode(parent, node) {
       parent.children = parent.children.filter(c => c !== node);
     }
-    // Find parent
     function findParent(node, target) {
       if (!node.children) return null;
       for (let c of node.children) {
         if (c === target) return node;
-        if (c.type === 'folder') {
+        if (c.type==='folder') {
           const res = findParent(c, target);
           if (res) return res;
         }
@@ -341,25 +393,21 @@ function deleteSelected() {
   }
 }
 
-// Initial render
+// Initialize the tree
 renderTree(root, filetreeDiv);
 switchTab('html');
 
-// Load saved data on page load
+// Load data on page load
 window.onload = function() {
   loadFiles();
 };
 
-// Auto-save every 5 seconds
+// Auto-save
 setInterval(() => {
   localStorage.setItem('fileStructure', JSON.stringify(root));
   console.log('Auto-saved at', new Date().toLocaleTimeString());
 }, 5000);
-
-// Save before reload or close
-window.addEventListener('beforeunload', () => {
-  saveFiles();
-});
+window.addEventListener('beforeunload', () => { saveFiles(); });
 </script>
 </body>
 </html>
